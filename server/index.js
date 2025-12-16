@@ -170,6 +170,17 @@ app.get('/api/history', async (req, res) => {
     res.status(500).json({ message: "Error fetching logs" });
   }
 });
+// === NEW: Delete ALL History Route ===
+app.delete('/api/history/all', async (req, res) => {
+  try {
+    await AttendanceLog.deleteMany({}); // <--- Deletes every document in the collection
+    console.log("🗑️ All history cleared");
+    res.json({ status: 'success' });
+  } catch (err) {
+    res.status(500).json({ message: "Error clearing logs" });
+  }
+});
+
 
 // === UPDATE B: Delete History Route ===
 app.delete('/api/history/:id', async (req, res) => {
