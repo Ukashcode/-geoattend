@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Loader2, ArrowLeft, WifiOff } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, WifiOff } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
 import io from 'socket.io-client';
 import API_URL from '../config';
 
@@ -91,7 +90,7 @@ const StudentAttendance = () => {
         });
 
         // === 3. SERVER TIMEOUT SAFETY ===
-        // If server doesn't reply in 10 seconds, show error
+        // If server doesn't reply in 15 seconds, show error
         setTimeout(() => {
           setStep((currentStep) => {
             if (currentStep === 'processing') {
@@ -120,23 +119,15 @@ const StudentAttendance = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
+    <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
       
-      {/* Connection Warning */}
+      {/* Connection Warning (Only shows if internet is bad) */}
       {!isConnected && (
-        <div className="absolute top-20 bg-red-100 text-red-600 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 animate-pulse">
+        <div className="absolute top-20 bg-red-100 text-red-600 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 animate-pulse z-10">
           <WifiOff size={14} />
           Connecting to server...
         </div>
       )}
-
-      {/* Header */}
-      <div className="w-full max-w-md flex justify-between items-center mb-6 px-2">
-        <h1 className="text-xl font-bold text-gray-900">GeoAttend</h1>
-        <Link to="/" className="text-sm text-gray-500 font-medium hover:text-blue-600">
-          Switch Role
-        </Link>
-      </div>
 
       {/* === STEP 1: INPUT === */}
       {step === 'input' && (
@@ -198,9 +189,6 @@ const StudentAttendance = () => {
         </motion.div>
       )}
 
-      <footer className="mt-8 text-gray-400 text-xs text-center max-w-xs">
-        &copy; 2025 GeoAttend System.
-      </footer>
     </div>
   );
 };
