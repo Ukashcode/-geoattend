@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 
 // Import our Model (Must include .js extension)
 import AttendanceLog from './models/AttendanceLog.js';
+import SupportTicket from './models/SupportTicket.js';
 
 dotenv.config();
 
@@ -159,10 +160,24 @@ app.get('/api/history', async (req, res) => {
 });
 
 // Submit Issue Route
-app.post('/submit-issue', (req, res) => {
-  const { name, category, message } = req.body;
-  console.log("📝 SUPPORT TICKET:", { name, category, message });
-  res.json({ status: 'success' });
+app.post('/submit-issue', async (req, res) => {
+  const { name, email, category, message } = req.body;
+  
+  try {
+    const newTicket = new SupportTicket({
+      name,
+      email,
+      category,
+      message
+    });
+    
+    await newTicket.save(); // Save to MongoDB
+    console.log("📝 Ticket Saved to DB from:", name);
+    res.json({ status: 'success' });
+  } catch (err) {
+    console.error("Ticket Save Error:", err);
+    res.status(500).json({ status: 'error' });
+  }
 });
 
 // Start Server
