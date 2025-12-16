@@ -5,7 +5,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
-// Import our Model (Must include .js extension)
+// Import our Models (Must include .js extension)
 import AttendanceLog from './models/AttendanceLog.js';
 import SupportTicket from './models/SupportTicket.js';
 
@@ -42,7 +42,7 @@ let activeSession = {
   otp: null,
   venueLat: null,
   venueLon: null,
-  radius: 75, // <--- UPDATED: Default to 75m for 500 students
+  radius: 75, // Default to 75m for 500 students
   students: [] // List of student IDs
 };
 
@@ -76,7 +76,7 @@ io.on('connection', (socket) => {
       otp: data.otp,
       venueLat: data.lat,
       venueLon: data.lon,
-      radius: data.radius || 75, // Fallback to 75m if not sent
+      radius: data.radius || 75, // Fallback to 75m
       students: []
     };
     
@@ -131,12 +131,24 @@ io.on('connection', (socket) => {
         });
         await newLog.save();
         console.log("💾 Saved to DB");
+
+        // === UPDATE A: Send full student details to Lecturer for Excel ===
+        io.emit('update_stats', { 
+          count: activeSession.students.length,
+          newStudent: { 
+            studentName: fullName, 
+            studentId: studentId, 
+            checkInTime: new Date(),
+            status: 'Present'
+          }
+        });
+
       } catch (err) {
         console.error("DB Save Error:", err);
       }
 
       socket.emit('attendance_result', { status: 'success', message: 'Marked Present!' });
-      io.emit('update_stats', { count: activeSession.students.length });
+      
     } else {
       // FAIL (Distance)
       socket.emit('attendance_result', { 
@@ -156,6 +168,16 @@ app.get('/api/history', async (req, res) => {
     res.json(logs);
   } catch (err) {
     res.status(500).json({ message: "Error fetching logs" });
+  }
+});
+
+// === UPDATE B: Delete History Route ===
+app.delete('/api/history/:id', async (req, res) => {
+  try {
+    await AttendanceLog.findByIdAndDelete(req.params.id);
+    res.json({ status: 'success' });
+  } catch (err) {
+    res.status(500).json({ message: "Error deleting log" });
   }
 });
 
