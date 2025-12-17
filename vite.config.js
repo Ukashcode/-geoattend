@@ -6,9 +6,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-       includeAssets: ['pwa-192x192.png', 'pwa-512x512.png'],
+      registerType: 'autoUpdate',
+      includeAssets: ['pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
-        name: 'GeoAttend',
+        name: 'GeoAttend System', // <--- Changed slightly to force update
         short_name: 'GeoAttend',
         description: 'Geo-Fenced Attendance System',
         theme_color: '#ffffff',
@@ -17,12 +18,12 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: '/pwa-192x192.png', // <--- SLASH GOES HERE IN THE CODE
+            src: '/pwa-192x192.png', // <--- MUST HAVE THE SLASH /
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: '/pwa-512x512.png', // <--- SLASH GOES HERE IN THE CODE
+            src: '/pwa-512x512.png', // <--- MUST HAVE THE SLASH /
             sizes: '512x512',
             type: 'image/png'
           }
