@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CountdownCircleTimer } from 'react-countdown-circle-timer';
-import { User, ChevronDown, Loader2 } from 'lucide-react'; // Added Loader
+import { User, ChevronDown, Loader2, MapPin } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import io from 'socket.io-client';
 import API_URL from '../config';
@@ -14,9 +14,9 @@ const LecturerSession = () => {
   const [otp, setOtp] = useState(null);
   const [studentsPresent, setStudentsPresent] = useState(0);
   
-  // === FIX 1: Store actual student data for Excel ===
   const [attendanceLog, setAttendanceLog] = useState([]); 
-  const [gpsLoading, setGpsLoading] = useState(false); // UI Feedback
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState(''); // Text to show user what is happening
 
   const classes = [
     "Advanced React Patterns",
@@ -29,58 +29,79 @@ const LecturerSession = () => {
     return Math.floor(1000 + Math.random() * 9000);
   }
 
+  // === SMART GPS LOCATOR ===
+  const getPreciseLocation = (attempt = 1) => {
+    setGpsLoading(true);
+    setGpsStatus(attempt === 1 ? "Acquiring GPS..." : `Improving accuracy (Attempt ${attempt}/3)...`);
+
+    const options = {
+      enableHighAccuracy: true,
+      timeout: 5000, // 5 seconds per attempt
+      maximumAge: 0
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        console.log(`GPS Attempt ${attempt}: Accuracy ${accuracy}m`);
+
+        // If accuracy is bad (>100m) and we haven't tried 3 times yet, TRY AGAIN
+        if (accuracy > 100 && attempt < 3) {
+          getPreciseLocation(attempt + 1); // Recursive retry
+          return;
+        }
+
+        // If we are here, either accuracy is good OR we ran out of attempts
+        // Warn only if it's really bad (>150m)
+        if (accuracy > 150) {
+          if(!confirm(`GPS Signal is weak (${Math.round(accuracy)}m). This might cause issues for students. Continue anyway?`)) {
+            setGpsLoading(false);
+            setGpsStatus("");
+            return;
+          }
+        }
+
+        // Success! Start Session
+        const initialOtp = generateCode();
+        setOtp(initialOtp);
+        setStep('active');
+        setGpsLoading(false);
+
+        socket.emit('start_session', {
+          otp: initialOtp,
+          lat: latitude,
+          lon: longitude,
+          radius: 75, 
+          className: selectedClass
+        });
+      }, 
+      (error) => {
+        // If error, try again or fail
+        if (attempt < 3) {
+          getPreciseLocation(attempt + 1);
+        } else {
+          setGpsLoading(false);
+          alert("Could not get GPS location. Please move near a window and try again.");
+        }
+      }, 
+      options
+    );
+  };
+
   const handleStartSession = () => {
     if (!navigator.geolocation) {
       alert("Geolocation is needed.");
       return;
     }
-
-    setGpsLoading(true); // Show loading spinner
-
-    // === FIX 2: FORCE HIGH ACCURACY GPS ===
-    const options = {
-      enableHighAccuracy: true, // Force GPS hardware
-      timeout: 10000,           // Wait up to 10s for a good signal
-      maximumAge: 0             // Do not use cached location
-    };
-
-    navigator.geolocation.getCurrentPosition((position) => {
-      const { latitude, longitude, accuracy } = position.coords;
-      
-      // Optional: Warn if accuracy is bad (>50m)
-      if (accuracy > 50) {
-        if(!confirm(`GPS Accuracy is low (${Math.round(accuracy)}m). This might cause issues. Continue?`)) {
-          setGpsLoading(false);
-          return;
-        }
-      }
-
-      const initialOtp = generateCode();
-      setOtp(initialOtp);
-      setStep('active');
-      setGpsLoading(false);
-
-      socket.emit('start_session', {
-        otp: initialOtp,
-        lat: latitude,
-        lon: longitude,
-        radius: 100, // Increased to 100m to be safe
-        className: selectedClass
-      });
-
-    }, (error) => {
-      setGpsLoading(false);
-      alert("Error getting location. Please ensure GPS is ON and try again.");
-    }, options);
+    // Start the smart locator
+    getPreciseLocation(1);
   };
 
-  // === FIX 3: Listen for Student Data ===
+  // === LISTEN FOR STUDENTS ===
   useEffect(() => {
     if (step === 'active') {
       socket.on('update_stats', (data) => {
         setStudentsPresent(data.count);
-        
-        // Add the new student to our local list for Excel
         if (data.newStudent) {
           setAttendanceLog((prev) => [...prev, data.newStudent]);
         }
@@ -99,9 +120,7 @@ const LecturerSession = () => {
   };
 
   const downloadExcel = () => {
-    // Check if we have data
     const dataToExport = attendanceLog.length > 0 ? attendanceLog : [{Status: "No students joined yet"}];
-    
     const ws = XLSX.utils.json_to_sheet(dataToExport);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendance");
@@ -137,7 +156,8 @@ const LecturerSession = () => {
               )}
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3">
+              <MapPin className="text-blue-600 shrink-0" size={24} />
               <p className="text-blue-800 text-sm leading-relaxed">
                 <span className="font-bold">Note:</span> We will capture your precise GPS location now. Please stand in the center of the hall.
               </p>
@@ -148,7 +168,12 @@ const LecturerSession = () => {
               disabled={gpsLoading}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2"
             >
-              {gpsLoading ? <Loader2 className="animate-spin" /> : "Start Attendance Session"}
+              {gpsLoading ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  {gpsStatus}
+                </>
+              ) : "Start Attendance Session"}
             </button>
           </div>
         </div>
