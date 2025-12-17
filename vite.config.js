@@ -7,20 +7,24 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      // We removed the extra assets list to prevent 404 errors if you don't have them
       manifest: {
         name: 'GeoAttend',
         short_name: 'GeoAttend',
         description: 'Geo-Fenced Attendance System',
         theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone', // This makes it look like a real app
+        scope: '/',
+        start_url: '/',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: '/pwa-192x192.png', // Note the slash at the start
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: '/pwa-512x512.png', // Note the slash at the start
             sizes: '512x512',
             type: 'image/png'
           }
