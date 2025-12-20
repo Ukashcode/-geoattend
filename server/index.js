@@ -5,50 +5,43 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
-// Import our Models (Must include .js extension)
 import AttendanceLog from './models/AttendanceLog.js';
 import SupportTicket from './models/SupportTicket.js';
+import StudentDevice from './models/StudentDevice.js';
 
 dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
 
-// === MIDDLEWARE (UPDATED FOR DEPLOYMENT) ===
-app.use(cors({
-  origin: "*" // Allow all connections (from Vercel, Localhost, Mobile, etc.)
-}));
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// === 1. CONNECT TO MONGODB ===
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/geoattend";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ MongoDB Error:", err));
 
-// === 2. SOCKET.IO SETUP (UPDATED FOR DEPLOYMENT) ===
 const io = new Server(httpServer, {
-  cors: {
-    origin: "*", // Allow all origins for WebSocket connections
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// === 3. IN-MEMORY SESSION STATE ===
+// === SESSION STATE ===
 let activeSession = {
   isActive: false,
   className: null,
   otp: null,
   venueLat: null,
   venueLon: null,
-  radius: 75, // Default to 75m for 500 students
-  students: [] // List of student IDs
+  radius: 100, // <--- UPDATED: Default to 100m to fix "Too Far" errors
+  lockDuration: 60,
+  students: []
 };
 
-// === 4. HELPER: Haversine Formula ===
+// === HELPER: Haversine Formula ===
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
-  const R = 6371; // Earth Radius in km
+  const R = 6371; 
   const dLat = deg2rad(lat2 - lat1);
   const dLon = deg2rad(lon2 - lon1);
   const a =
@@ -56,19 +49,17 @@ function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
     Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat1)) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  const d = R * c; 
-  return d * 1000; // Return Meters
+  return R * c * 1000;
 }
 
 function deg2rad(deg) {
   return deg * (Math.PI / 180);
 }
 
-// === 5. SOCKET LOGIC ===
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // --- LECTURER STARTS SESSION ---
+  // === LECTURER: START SESSION ===
   socket.on('start_session', (data) => {
     activeSession = {
       isActive: true,
@@ -76,18 +67,30 @@ io.on('connection', (socket) => {
       otp: data.otp,
       venueLat: data.lat,
       venueLon: data.lon,
-      radius: data.radius || 75, // Fallback to 75m
+      radius: data.radius || 100, // Default 100m
+      lockDuration: data.lockDuration || 60,
       students: []
     };
     
-    console.log(`\n📢 CLASS STARTED: ${data.className}`);
-    console.log(`🔑 OTP: ${data.otp}`);
-    console.log(`📡 Geofence Radius: ${activeSession.radius}m`);
-    
+    console.log(`\n📢 CLASS STARTED: ${data.className} (Radius: ${activeSession.radius}m)`);
     io.emit('update_stats', { count: 0 });
   });
 
-  // --- LECTURER ROTATES OTP ---
+  // === LECTURER: RESTORE SESSION ===
+  socket.on('request_current_state', () => {
+    if (activeSession.isActive) {
+      socket.emit('session_restored', {
+        isActive: true,
+        className: activeSession.className,
+        otp: activeSession.otp,
+        count: activeSession.students.length,
+        radius: activeSession.radius,
+        lockDuration: activeSession.lockDuration
+      });
+    }
+  });
+
+  // === LECTURER: UPDATE OTP ===
   socket.on('update_otp', (newOtp) => {
     if (activeSession.isActive) {
       activeSession.otp = newOtp;
@@ -95,25 +98,54 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- STUDENT MARKS ATTENDANCE ---
+  // === STUDENT: MARK ATTENDANCE ===
   socket.on('mark_attendance', async (data) => {
-    const { studentOtp, fullName, studentId, lat, lon } = data;
+    const { studentOtp, fullName, studentId, lat, lon, deviceId, timestamp, isOffline } = data;
+    const actualCheckInTime = isOffline && timestamp ? new Date(timestamp) : new Date();
 
-    // A. Validation
+    // 1. VALIDATION
     if (!activeSession.isActive) {
-      socket.emit('attendance_result', { status: 'error', message: 'No active class session.' });
-      return;
+       socket.emit('attendance_result', { status: 'error', message: 'No active class session.', studentId });
+       return;
     }
+
     if (String(studentOtp) !== String(activeSession.otp)) {
-      socket.emit('attendance_result', { status: 'error', message: 'Incorrect OTP Code.' });
-      return;
-    }
-    if (activeSession.students.includes(studentId)) {
-      socket.emit('attendance_result', { status: 'error', message: 'Attendance already marked.' });
+      socket.emit('attendance_result', { status: 'error', message: 'Incorrect or Expired OTP Code.', studentId });
       return;
     }
 
-    // B. GPS Check
+    // 2. DUPLICATE CHECK (Session Level)
+    if (activeSession.students.includes(studentId)) {
+      socket.emit('attendance_result', { status: 'error', message: 'You have already signed in for this class!', studentId });
+      return;
+    }
+
+    // 3. DEVICE BINDING CHECK (Strict Security)
+    try {
+      // Check if ID is bound to another device
+      const idBinding = await StudentDevice.findOne({ studentId });
+      if (idBinding && idBinding.deviceId !== deviceId) {
+        socket.emit('attendance_result', { status: 'error', message: 'Security Alert: This Student ID is linked to another browser/device.', studentId });
+        return;
+      }
+
+      // Check if Device is bound to another ID
+      const deviceBinding = await StudentDevice.findOne({ deviceId });
+      if (deviceBinding && deviceBinding.studentId !== studentId) {
+        socket.emit('attendance_result', { status: 'error', message: 'Security Alert: This browser is linked to another Student ID.', studentId });
+        return;
+      }
+
+      // If new, bind them
+      if (!idBinding && !deviceBinding) {
+        await new StudentDevice({ studentId, deviceId }).save();
+        console.log(`🔒 Bound ID ${studentId} to Device ${deviceId}`);
+      }
+    } catch (err) {
+      console.error("Binding Error:", err);
+    }
+
+    // 4. GPS CHECK
     const distance = getDistanceFromLatLonInM(activeSession.venueLat, activeSession.venueLon, lat, lon);
     console.log(`🏃 Student ${fullName} is ${Math.round(distance)}m away.`);
 
@@ -121,25 +153,24 @@ io.on('connection', (socket) => {
       // SUCCESS
       activeSession.students.push(studentId);
 
-      // Save to DB
       try {
         const newLog = new AttendanceLog({
           studentName: fullName,
           studentId,
           className: activeSession.className,
+          checkInTime: actualCheckInTime,
           location: { lat, lon }
         });
         await newLog.save();
-        console.log("💾 Saved to DB");
 
-        // === UPDATE A: Send full student details to Lecturer for Excel ===
+        // Notify Lecturer
         io.emit('update_stats', { 
           count: activeSession.students.length,
           newStudent: { 
             studentName: fullName, 
             studentId: studentId, 
-            checkInTime: new Date(),
-            status: 'Present'
+            checkInTime: actualCheckInTime,
+            status: isOffline ? 'Synced (Offline)' : 'Present'
           }
         });
 
@@ -147,74 +178,55 @@ io.on('connection', (socket) => {
         console.error("DB Save Error:", err);
       }
 
-      socket.emit('attendance_result', { status: 'success', message: 'Marked Present!' });
+      // Send Success to Student
+      socket.emit('attendance_result', { 
+        status: 'success', 
+        message: isOffline ? 'Offline Data Synced!' : 'Marked Present!',
+        lockDuration: activeSession.lockDuration,
+        studentId // Tag message
+      });
       
     } else {
-      // FAIL (Distance)
+      // FAIL
       socket.emit('attendance_result', { 
         status: 'error', 
-        message: `Too far! (${Math.round(distance)}m away). Move closer.` 
+        message: `Too far! (${Math.round(distance)}m away). Move closer to the lecturer.`,
+        studentId
       });
     }
   });
 });
 
-// === 6. API ROUTES ===
-
-// Get History Route
+// === API ROUTES ===
 app.get('/api/history', async (req, res) => {
   try {
     const logs = await AttendanceLog.find().sort({ checkInTime: -1 });
     res.json(logs);
-  } catch (err) {
-    res.status(500).json({ message: "Error fetching logs" });
-  }
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
-// === NEW: Delete ALL History Route ===
+
 app.delete('/api/history/all', async (req, res) => {
   try {
-    await AttendanceLog.deleteMany({}); // <--- Deletes every document in the collection
-    console.log("🗑️ All history cleared");
+    await AttendanceLog.deleteMany({});
     res.json({ status: 'success' });
-  } catch (err) {
-    res.status(500).json({ message: "Error clearing logs" });
-  }
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-
-// === UPDATE B: Delete History Route ===
 app.delete('/api/history/:id', async (req, res) => {
   try {
     await AttendanceLog.findByIdAndDelete(req.params.id);
     res.json({ status: 'success' });
-  } catch (err) {
-    res.status(500).json({ message: "Error deleting log" });
-  }
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// Submit Issue Route
 app.post('/submit-issue', async (req, res) => {
-  const { name, email, category, message } = req.body;
-  
   try {
-    const newTicket = new SupportTicket({
-      name,
-      email,
-      category,
-      message
-    });
-    
-    await newTicket.save(); // Save to MongoDB
-    console.log("📝 Ticket Saved to DB from:", name);
+    await new SupportTicket(req.body).save();
     res.json({ status: 'success' });
-  } catch (err) {
-    console.error("Ticket Save Error:", err);
-    res.status(500).json({ status: 'error' });
-  }
+  } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
-// Start Server
 const PORT = 3001;
 httpServer.listen(PORT, () => {
-  console.log(`🚀 SERVER RUNNING ON PORT ${PORT} (ES6 Mode)`);
+  console.log(`🚀 SERVER RUNNING ON PORT ${PORT}`);
 });

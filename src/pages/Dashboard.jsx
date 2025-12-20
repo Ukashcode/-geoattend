@@ -7,9 +7,12 @@ const Dashboard = () => {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [myClasses, setMyClasses] = useState([]);
 
   useEffect(() => {
     fetchLogs();
+    const savedClasses = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
+    setMyClasses(savedClasses);
   }, []);
 
   const fetchLogs = () => {
@@ -22,50 +25,41 @@ const Dashboard = () => {
       .catch(err => console.error(err));
   };
 
-  // === DELETE SINGLE RECORD ===
   const handleDelete = async (id) => {
-    if(!confirm("Delete this specific record?")) return;
+    if(!confirm("Delete this record?")) return;
     try {
       await fetch(`${API_URL}/api/history/${id}`, { method: 'DELETE' });
       setLogs(logs.filter(log => log._id !== id));
-    } catch (error) {
-      alert("Failed to delete");
-    }
+    } catch (error) { alert("Failed to delete"); }
   };
 
-  // === DELETE ALL HISTORY ===
   const handleDeleteAll = async () => {
-    if (!confirm("⚠️ WARNING: This will delete ALL attendance records permanently.")) return;
-    if (!confirm("Are you absolutely sure? This cannot be undone.")) return;
-
+    if (!confirm("⚠️ WARNING: This will delete ALL records.")) return;
     try {
       await fetch(`${API_URL}/api/history/all`, { method: 'DELETE' });
       setLogs([]);
-      alert("All history has been cleared.");
-    } catch (error) {
-      alert("Failed to clear history");
-    }
+      alert("History cleared.");
+    } catch (error) { alert("Failed to clear history"); }
   };
 
-  // === FILTER & GROUP LOGIC ===
-  // 1. Filter based on search
-  const filteredLogs = logs.filter(log => 
-    log.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.className.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.studentId.includes(searchTerm)
-  );
+  // === STRICT FILTER: Only show classes started on this device ===
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = 
+      log.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.className.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      log.studentId.includes(searchTerm);
+    
+    const isMyClass = myClasses.includes(log.className);
+    return matchesSearch && isMyClass;
+  });
 
-  // 2. Group by Class Name
   const groupedLogs = filteredLogs.reduce((groups, log) => {
     const topic = log.className || "Unknown Class";
-    if (!groups[topic]) {
-      groups[topic] = [];
-    }
+    if (!groups[topic]) groups[topic] = [];
     groups[topic].push(log);
     return groups;
   }, {});
 
-  // === EXPORT FUNCTION (Per Class) ===
   const downloadClassReport = (classLogs, className) => {
     const ws = XLSX.utils.json_to_sheet(classLogs);
     const wb = XLSX.utils.book_new();
@@ -76,77 +70,46 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto">
-        
-        {/* === HEADER SECTION === */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Attendance Dashboard</h1>
-            <p className="text-gray-500 mt-1">Manage records grouped by Class Topic.</p>
+            <p className="text-gray-500 mt-1">Viewing classes started on this device.</p>
           </div>
-          
-          {/* GLOBAL ACTIONS */}
           <div className="flex flex-wrap gap-3 w-full md:w-auto">
-            {logs.length > 0 && (
-              <button 
-                onClick={handleDeleteAll}
-                className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-100 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-200 transition-colors shadow-sm active:scale-95"
-              >
-                <Trash2 size={18} />
-                Clear All History
+            {filteredLogs.length > 0 && (
+              <button onClick={handleDeleteAll} className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-red-100 text-red-600 px-5 py-3 rounded-xl font-bold hover:bg-red-200 transition-colors shadow-sm active:scale-95">
+                <Trash2 size={18} /> Clear Database
               </button>
             )}
           </div>
         </div>
 
-        {/* === SEARCH BAR === */}
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 mb-8 flex items-center gap-3 sticky top-20 z-10">
           <Search className="text-gray-400" />
-          <input 
-            type="text" 
-            placeholder="Search for a student, ID, or class topic..." 
-            className="flex-grow outline-none text-gray-700 font-medium bg-transparent"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+          <input type="text" placeholder="Search..." className="flex-grow outline-none text-gray-700 font-medium bg-transparent" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
         </div>
 
-        {/* === CONTENT AREA === */}
         {loading ? (
           <div className="text-center py-20 text-gray-400">Loading records...</div>
         ) : Object.keys(groupedLogs).length === 0 ? (
           <div className="text-center py-20 flex flex-col items-center text-gray-400">
             <AlertTriangle size={48} className="mb-4 text-gray-300" />
-            <p>No records found.</p>
+            <p className="font-medium text-gray-600">No classes found on this device.</p>
+            <p className="text-sm mt-2">Start a session to see data here.</p>
           </div>
         ) : (
           <div className="space-y-8">
-            {/* === LOOP THROUGH EACH CLASS TOPIC === */}
             {Object.entries(groupedLogs).map(([className, classLogs]) => (
               <div key={className} className="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
-                
-                {/* CLASS HEADER */}
                 <div className="bg-gray-50 p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div className="flex items-center gap-3">
-                    <div className="bg-blue-600 p-2 rounded-lg text-white">
-                      <Layers size={20} />
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-bold text-gray-900">{className}</h2>
-                      <p className="text-sm text-gray-500">{classLogs.length} Students Present</p>
-                    </div>
+                    <div className="bg-blue-600 p-2 rounded-lg text-white"><Layers size={20} /></div>
+                    <div><h2 className="text-xl font-bold text-gray-900">{className}</h2><p className="text-sm text-gray-500">{classLogs.length} Students Present</p></div>
                   </div>
-
-                  {/* EXPORT BUTTON FOR THIS SPECIFIC CLASS */}
-                  <button 
-                    onClick={() => downloadClassReport(classLogs, className)}
-                    className="flex items-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-green-700 transition-colors shadow-md text-sm active:scale-95"
-                  >
-                    <Download size={16} />
-                    Export {className}
+                  <button onClick={() => downloadClassReport(classLogs, className)} className="flex items-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-green-700 transition-colors shadow-md text-sm active:scale-95">
+                    <Download size={16} /> Export {className}
                   </button>
                 </div>
-
-                {/* TABLE FOR THIS CLASS */}
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -160,30 +123,10 @@ const Dashboard = () => {
                     <tbody className="divide-y divide-gray-50">
                       {classLogs.map((log) => (
                         <tr key={log._id} className="hover:bg-blue-50/50 transition-colors group">
-                          <td className="p-5 pl-8">
-                            <div className="flex items-center gap-3">
-                              <div className="bg-gray-100 p-2 rounded-full text-gray-500 group-hover:bg-blue-200 group-hover:text-blue-700 transition-colors">
-                                <User size={14} />
-                              </div>
-                              <span className="font-bold text-gray-800">{log.studentName}</span>
-                            </div>
-                          </td>
+                          <td className="p-5 pl-8"><div className="flex items-center gap-3"><div className="bg-gray-100 p-2 rounded-full text-gray-500 group-hover:bg-blue-200 group-hover:text-blue-700 transition-colors"><User size={14} /></div><span className="font-bold text-gray-800">{log.studentName}</span></div></td>
                           <td className="p-5 text-gray-600 font-mono text-sm">{log.studentId}</td>
-                          <td className="p-5 text-gray-500 text-sm">
-                            <div className="flex items-center gap-2">
-                              <Calendar size={14} />
-                              {new Date(log.checkInTime).toLocaleString()}
-                            </div>
-                          </td>
-                          <td className="p-5 text-right pr-8">
-                            <button 
-                              onClick={() => handleDelete(log._id)}
-                              className="text-gray-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete record"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </td>
+                          <td className="p-5 text-gray-500 text-sm"><div className="flex items-center gap-2"><Calendar size={14} />{new Date(log.checkInTime).toLocaleString()}</div></td>
+                          <td className="p-5 text-right pr-8"><button onClick={() => handleDelete(log._id)} className="text-gray-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button></td>
                         </tr>
                       ))}
                     </tbody>
