@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CountdownCircleTimer } from 'react-countdown-circle-timer';
-import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown } from 'lucide-react';
+import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History } from 'lucide-react'; // Added History Icon
 import * as XLSX from 'xlsx';
 import io from 'socket.io-client';
 import API_URL from '../config';
@@ -10,13 +10,22 @@ const socket = io.connect(API_URL);
 const LecturerSession = () => {
   const [step, setStep] = useState('setup');
   const [selectedClass, setSelectedClass] = useState(''); 
-  const [duration, setDuration] = useState(60); 
+  const [duration, setDuration] = useState(120); 
   const [otp, setOtp] = useState(null);
   const [studentsPresent, setStudentsPresent] = useState(0);
   const [attendanceLog, setAttendanceLog] = useState([]); 
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsStatus, setGpsStatus] = useState('');
   const [currentAccuracy, setCurrentAccuracy] = useState(null);
+  
+  // === NEW: SAVED COURSES STATE ===
+  const [savedCourses, setSavedCourses] = useState([]);
+
+  // Load saved courses on mount
+  useEffect(() => {
+    const history = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
+    setSavedCourses(history);
+  }, []);
 
   function generateCode() {
     return Math.floor(1000 + Math.random() * 9000);
@@ -33,13 +42,9 @@ const LecturerSession = () => {
         const { latitude, longitude, accuracy } = position.coords;
         setCurrentAccuracy(Math.round(accuracy));
 
-        if (accuracy > 50 && attempt < 3) {
-          getPreciseLocation(attempt + 1);
-          return;
-        }
-
+        if (accuracy > 50 && attempt < 3) { getPreciseLocation(attempt + 1); return; }
         if (accuracy > 100) {
-           if(!confirm(`GPS Accuracy is ${Math.round(accuracy)}m. This is weak. Continue?`)) {
+           if(!confirm(`GPS Accuracy is ${Math.round(accuracy)}m. Continue?`)) {
              setGpsLoading(false); setGpsStatus(""); return;
            }
         }
@@ -49,7 +54,7 @@ const LecturerSession = () => {
         setStep('active');
         setGpsLoading(false);
 
-        // === SAVE CLASS TO PHONE MEMORY (For Dashboard Privacy) ===
+        // Save new course to history if unique
         const myClasses = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
         if (!myClasses.includes(selectedClass)) {
           myClasses.push(selectedClass);
@@ -60,13 +65,13 @@ const LecturerSession = () => {
           otp: initialOtp,
           lat: latitude,
           lon: longitude,
-          radius: 100, // <--- 100m Radius
+          radius: 100,
           className: selectedClass,
           lockDuration: duration
         });
       }, 
       (error) => {
-        if (attempt < 3) { getPreciseLocation(attempt + 1); } else { setGpsLoading(false); alert("GPS Error. Move near a window."); }
+        if (attempt < 3) { getPreciseLocation(attempt + 1); } else { setGpsLoading(false); alert("GPS Error."); }
       }, 
       options
     );
@@ -95,7 +100,17 @@ const LecturerSession = () => {
       if (data.newStudent) { setAttendanceLog((prev) => [data.newStudent, ...prev]); }
     });
 
-    return () => { socket.off('session_restored'); socket.off('update_stats'); };
+    socket.on('session_expired', (data) => {
+      alert(data.message);
+      setStep('setup');
+      setOtp(null);
+    });
+
+    return () => { 
+      socket.off('session_restored'); 
+      socket.off('update_stats'); 
+      socket.off('session_expired'); 
+    };
   }, []);
 
   const handleTimerComplete = () => {
@@ -121,29 +136,62 @@ const LecturerSession = () => {
             <h2 className="text-xl font-bold text-gray-900">Start New Session</h2>
           </div>
           <div className="p-8 space-y-6">
+            
+            {/* === COURSE INPUT SECTION === */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Course Name</label>
-              <div className="relative">
+              
+              {/* 1. The Text Input (Always visible) */}
+              <div className="relative mb-3">
                 <BookOpen className="absolute left-4 top-3.5 text-gray-400" size={20} />
-                <input type="text" value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} placeholder="e.g. PHY 101" className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" />
+                <input 
+                  type="text" 
+                  value={selectedClass} 
+                  onChange={(e) => setSelectedClass(e.target.value)} 
+                  placeholder="e.g. PHY 101" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" 
+                />
               </div>
+
+              {/* 2. The Quick Select Dropdown (Only if history exists) */}
+              {savedCourses.length > 0 && (
+                <div className="relative">
+                  <History className="absolute left-4 top-3.5 text-gray-400" size={20} />
+                  <select 
+                    onChange={(e) => setSelectedClass(e.target.value)}
+                    className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium cursor-pointer"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Select from recent courses...</option>
+                    {savedCourses.map((course, index) => (
+                      <option key={index} value={course}>{course}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-4 top-3.5 text-blue-400 pointer-events-none" size={20} />
+                </div>
+              )}
             </div>
+
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Duration (Lock)</label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Duration (Auto-Close & Lock)</label>
               <div className="relative">
                 <Clock className="absolute left-4 top-3.5 text-gray-400" size={20} />
                 <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium">
                   <option value={30}>30 Minutes</option>
                   <option value={60}>1 Hour</option>
+                  <option value={90}>1 Hour 30 Mins</option>
                   <option value={120}>2 Hours</option>
+                  <option value={180}>3 Hours</option>
                 </select>
                 <ChevronDown className="absolute right-4 top-3.5 text-gray-400 pointer-events-none" size={20} />
               </div>
             </div>
+
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col gap-2">
               <div className="flex gap-3"><MapPin className="text-blue-600 shrink-0" size={24} /><p className="text-blue-800 text-sm leading-relaxed"><span className="font-bold">Note:</span> Capturing GPS location.</p></div>
               {currentAccuracy && <div className={`text-xs font-bold mt-2 px-2 py-1 rounded w-fit ${currentAccuracy < 50 ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>Accuracy: {currentAccuracy}m</div>}
             </div>
+            
             <button onClick={handleStartSession} disabled={gpsLoading || !selectedClass.trim()} className={`w-full font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2 ${!selectedClass.trim() || gpsLoading ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
               {gpsLoading ? <><Loader2 className="animate-spin" />{gpsStatus}</> : "Start Session"}
             </button>
@@ -153,6 +201,7 @@ const LecturerSession = () => {
     );
   }
 
+  // ... (Keep Render Active section same as before) ...
   return (
     <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
       <div className="mb-6 text-center">

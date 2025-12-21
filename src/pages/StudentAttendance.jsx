@@ -1,51 +1,118 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Loader2, WifiOff, Lock, Clock, ShieldAlert } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, WifiOff, Lock, Clock, UserCheck, CloudOff, RefreshCw, Save, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import io from 'socket.io-client';
 import API_URL from '../config';
 
-console.log("Connecting to Backend at:", API_URL);
+const getDeviceId = () => {
+  let id = localStorage.getItem('geoAttend_deviceId');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+    localStorage.setItem('geoAttend_deviceId', id);
+  }
+  return id;
+};
 
 const socket = io.connect(API_URL, {
   reconnectionAttempts: 5,
   timeout: 10000,
+  autoConnect: true
 });
-
-const LOCK_DURATION = 10 * 60 * 1000; // 10 Minutes
 
 const StudentAttendance = () => {
   const [step, setStep] = useState('input'); 
   const [formData, setFormData] = useState({ fullName: '', studentId: '', otp: '' });
   const [status, setStatus] = useState(null);
   const [message, setMessage] = useState('');
+  
   const [isConnected, setIsConnected] = useState(socket.connected);
+  const [isOfflineMode, setIsOfflineMode] = useState(!navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
+  
+  const [isReturningUser, setIsReturningUser] = useState(false);
   const [isDeviceLocked, setIsDeviceLocked] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
+  
+  // New state to allow switching classes while locked
+  const [overrideLock, setOverrideLock] = useState(false);
 
   useEffect(() => {
-    socket.on('connect', () => setIsConnected(true));
+    const savedName = localStorage.getItem('geoAttend_name');
+    const savedId = localStorage.getItem('geoAttend_id');
+    if (savedName && savedId) {
+      setFormData(prev => ({ ...prev, fullName: savedName, studentId: savedId }));
+      setIsReturningUser(true);
+    }
+
+    const handleOnline = () => { setIsOfflineMode(false); attemptSync(); };
+    const handleOffline = () => setIsOfflineMode(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    socket.on('connect', () => { setIsConnected(true); attemptSync(); });
     socket.on('disconnect', () => setIsConnected(false));
     
     socket.on('attendance_result', (data) => {
+      if (data.studentId && data.studentId !== formData.studentId) return;
+
+      setIsSyncing(false);
       setStatus(data.status);
       setMessage(data.message);
       setStep('result');
 
       if (data.status === 'success') {
-        const lockData = { timestamp: new Date().getTime(), studentId: formData.studentId };
-        localStorage.setItem('geoAttend_lock', JSON.stringify(lockData));
-        checkDeviceLock();
+        const durationMs = (data.lockDuration || 60) * 60 * 1000;
+        handleSuccess(formData.studentId, durationMs);
       }
     });
 
     checkDeviceLock();
 
     return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
       socket.off('connect');
       socket.off('disconnect');
       socket.off('attendance_result');
     };
   }, [formData.studentId]);
+
+  const attemptSync = () => {
+    const pendingData = localStorage.getItem('geoAttend_pending');
+    if (pendingData && socket.connected) {
+      setIsSyncing(true);
+      const data = JSON.parse(pendingData);
+      data.isOffline = true; 
+      socket.emit('mark_attendance', data);
+      localStorage.removeItem('geoAttend_pending');
+    }
+  };
+
+  const saveOffline = (data) => {
+    localStorage.setItem('geoAttend_pending', JSON.stringify(data));
+    setStep('result');
+    setStatus('success'); 
+    setMessage("Offline Mode: Attendance Saved! It will sync automatically.");
+    // Default offline lock to 60 mins if unknown
+    handleSuccess(data.studentId, 60 * 60 * 1000);
+  };
+
+  const handleSuccess = (studentId, durationMs) => {
+    const lockData = { 
+      timestamp: new Date().getTime(), 
+      studentId,
+      duration: durationMs,
+      otp: formData.otp // <--- SAVE THE OTP USED
+    };
+    localStorage.setItem('geoAttend_lock', JSON.stringify(lockData));
+    localStorage.setItem('geoAttend_name', formData.fullName);
+    localStorage.setItem('geoAttend_id', formData.studentId);
+    
+    // Reset override so lock screen shows
+    setOverrideLock(false);
+    checkDeviceLock();
+  };
 
   useEffect(() => {
     let timer;
@@ -67,12 +134,14 @@ const StudentAttendance = () => {
   const checkDeviceLock = () => {
     const lockData = localStorage.getItem('geoAttend_lock');
     if (lockData) {
-      const { timestamp } = JSON.parse(lockData);
+      const { timestamp, duration } = JSON.parse(lockData);
+      const lockTime = duration || (60 * 60 * 1000); 
       const now = new Date().getTime();
       const timePassed = now - timestamp;
-      if (timePassed < LOCK_DURATION) {
+
+      if (timePassed < lockTime) {
         setIsDeviceLocked(true);
-        setTimeLeft(LOCK_DURATION - timePassed);
+        setTimeLeft(lockTime - timePassed);
       } else {
         localStorage.removeItem('geoAttend_lock');
         setIsDeviceLocked(false);
@@ -92,104 +161,93 @@ const StudentAttendance = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // === NEW: MOCK LOCATION DETECTOR ===
-  const detectMockLocation = (coords) => {
-    // 1. Check for missing Altitude/Speed (Common in basic spoofers on mobile)
-    // Note: Some cheap real phones also miss this, so we use it as a "Risk Factor"
-    // but we won't block solely on this to avoid false positives.
-    
-    // 2. Check for "Perfect" Accuracy
-    // Real GPS rarely has accuracy < 3 meters inside a building.
-    // Mock GPS often sets accuracy to 1 or 0.
-    if (coords.accuracy <= 2) {
-      return true; // Suspiciously perfect
+  const handleSubmit = () => {
+    // === SMART LOCK CHECK ===
+    if (isDeviceLocked) {
+      const lockData = JSON.parse(localStorage.getItem('geoAttend_lock'));
+      // If they try to use the SAME OTP, block them.
+      // If they use a DIFFERENT OTP (New Class), allow it.
+      if (lockData && lockData.otp === formData.otp) {
+        alert(`You already signed in for this class. Device locked for ${formatTime(timeLeft)}`);
+        return;
+      }
     }
 
-    return false;
-  };
-
-  const handleSubmit = () => {
-    if (isDeviceLocked) { alert(`Device locked. Wait ${formatTime(timeLeft)}`); return; }
     if (!formData.fullName || !formData.studentId || formData.otp.length !== 4) { alert("Fill all fields."); return; }
-    if (!isConnected) { alert("No connection."); return; }
 
     setStep('processing');
-    setMessage("Analyzing GPS Signal...");
+    setMessage("Acquiring GPS Location...");
 
-    if (!navigator.geolocation) { handleError("Geolocation not supported."); return; }
+    if (!navigator.geolocation) { 
+        setStep('result'); setStatus('error'); setMessage("Geolocation not supported."); return; 
+    }
 
-    const gpsOptions = {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0
-    };
+    const gpsOptions = { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 };
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const { latitude, longitude, accuracy, altitude, speed } = position.coords;
+        const { latitude, longitude } = position.coords;
         
-        // === RUN SECURITY CHECKS ===
-        if (detectMockLocation(position.coords)) {
-          setStep('result');
-          setStatus('error');
-          setMessage("Security Alert: Irregular GPS signal detected. Please turn off any Mock Location apps.");
-          return;
-        }
-
-        setMessage("Verifying with Server...");
-        
-        socket.emit('mark_attendance', {
+        const payload = {
           studentOtp: formData.otp,
           fullName: formData.fullName,
           studentId: formData.studentId,
           lat: latitude,
-          lon: longitude
-        });
+          lon: longitude,
+          deviceId: getDeviceId(),
+          timestamp: new Date().toISOString(),
+          isOffline: false 
+        };
 
-        setTimeout(() => {
-          setStep((currentStep) => {
-            if (currentStep === 'processing') {
-              setStatus('error');
-              setMessage("Server timed out.");
-              return 'result';
-            }
-            return currentStep;
-          });
-        }, 15000);
+        if (socket.connected && !isOfflineMode) {
+          setMessage("Verifying with Server...");
+          socket.emit('mark_attendance', payload);
+        } else {
+          saveOffline({ ...payload, isOffline: true });
+        }
       },
       (error) => {
-        let errorMsg = "Location access denied.";
-        if (error.code === 3) errorMsg = "GPS timed out.";
-        if (error.code === 2) errorMsg = "GPS unavailable.";
-        handleError(errorMsg);
+        setStep('result'); setStatus('error'); setMessage("Location access denied or GPS error.");
       },
       gpsOptions
     );
   };
 
-  const handleError = (msg) => {
-    setStep('result');
-    setStatus('error');
-    setMessage(msg);
-  };
-
-  if (isDeviceLocked) {
+  // === RENDER: DEVICE LOCKED SCREEN ===
+  // Only show if locked AND user hasn't clicked "Join Another Class"
+  if (isDeviceLocked && !overrideLock) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
         <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-sm w-full border border-orange-100">
           <div className="bg-orange-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
             <Lock size={40} className="text-orange-500" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">Device Cooldown</h2>
-          <p className="text-gray-500 mt-2 text-sm">Attendance marked. Device locked temporarily.</p>
+          <h2 className="text-2xl font-bold text-gray-900">Attendance Marked</h2>
+          <p className="text-gray-500 mt-2 text-sm leading-relaxed">
+            You have successfully signed in. This device is locked for this specific class to prevent proxy attendance.
+          </p>
+          
           <div className="mt-6 bg-gray-900 text-white rounded-xl p-4 flex items-center justify-center gap-3">
             <Clock size={20} className="text-orange-400" />
             <div className="text-left">
-              <p className="text-xs text-gray-400 uppercase tracking-wider">Next Sign-in enabled in</p>
+              <p className="text-xs text-gray-400 uppercase tracking-wider">Cooldown Timer</p>
               <p className="text-2xl font-mono font-bold">{formatTime(timeLeft)}</p>
             </div>
           </div>
-          <button onClick={() => window.location.href = '/'} className="mt-6 text-gray-400 font-bold hover:text-gray-600 text-sm">Back to Home</button>
+
+          {/* === NEW BUTTON: JOIN ANOTHER CLASS === */}
+          <button 
+            onClick={() => {
+              setOverrideLock(true); // Hide this screen
+              setStep('input'); // Show input form
+              setFormData(prev => ({ ...prev, otp: '' })); // Clear OTP so they can type new one
+            }}
+            className="mt-6 w-full flex items-center justify-center gap-2 text-blue-600 font-bold bg-blue-50 py-3 rounded-xl hover:bg-blue-100 transition-colors"
+          >
+            Join Another Class <ArrowRight size={16} />
+          </button>
+
+          <button onClick={() => window.location.href = '/'} className="mt-4 text-gray-400 text-xs hover:text-gray-600">Back to Home</button>
         </div>
       </div>
     );
@@ -197,20 +255,51 @@ const StudentAttendance = () => {
 
   return (
     <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
-      {!isConnected && (
-        <div className="absolute top-20 bg-red-100 text-red-600 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 animate-pulse z-10">
-          <WifiOff size={14} /> Connecting...
+      
+      {isSyncing && (
+        <div className="absolute top-20 bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 animate-pulse">
+          <RefreshCw size={14} className="animate-spin" /> Syncing Data...
+        </div>
+      )}
+
+      {!isConnected && !isSyncing && (
+        <div className="absolute top-20 bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 border border-yellow-200">
+          <CloudOff size={14} /> Offline Mode
         </div>
       )}
 
       {step === 'input' && (
         <motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md">
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Student Check-in</h2>
+          
+          {isReturningUser ? (
+            <div className="mb-6 text-center">
+               <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <UserCheck size={32} className="text-blue-600" />
+               </div>
+               <h2 className="text-xl font-bold text-gray-900">Welcome, {formData.fullName.split(' ')[0]}</h2>
+               <p className="text-sm text-gray-500">{formData.studentId}</p>
+            </div>
+          ) : (
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Student Check-in</h2>
+          )}
+          
           <div className="space-y-5">
-            <div><label className="block text-sm font-semibold text-gray-700 mb-2">Full Name</label><input type="text" name="fullName" value={formData.fullName} onChange={handleChange} placeholder="e.g. Jane Doe" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all" /></div>
-            <div><label className="block text-sm font-semibold text-gray-700 mb-2">Student ID</label><input type="text" name="studentId" value={formData.studentId} onChange={handleChange} placeholder="e.g. 2024001" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all" /></div>
+            {!isReturningUser && (
+              <>
+                <div><label className="block text-sm font-semibold text-gray-700 mb-2">Full Name</label><input type="text" name="fullName" value={formData.fullName} onChange={handleChange} placeholder="e.g. Jane Doe" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all" /></div>
+                <div><label className="block text-sm font-semibold text-gray-700 mb-2">Student ID</label><input type="text" name="studentId" value={formData.studentId} onChange={handleChange} placeholder="e.g. 2024001" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all" /></div>
+              </>
+            )}
+
             <div><label className="block text-sm font-semibold text-gray-700 mb-2">4-Digit OTP</label><input type="number" name="otp" value={formData.otp} onChange={handleChange} placeholder="0 0 0 0" maxLength={4} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-4 text-center text-3xl font-bold text-gray-800 tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all placeholder:tracking-widest" /></div>
-            <button onClick={handleSubmit} disabled={!isConnected} className={`w-full font-bold py-4 rounded-xl text-lg shadow-lg transition-transform active:scale-95 ${isConnected ? 'bg-teal-600 hover:bg-teal-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>{isConnected ? "Verify Attendance" : "Connecting..."}</button>
+            
+            <button onClick={handleSubmit} className={`w-full font-bold py-4 rounded-xl text-lg shadow-lg transition-transform active:scale-95 ${!isConnected ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}>
+              {!isConnected ? (<span className="flex items-center justify-center gap-2"><Save size={20} /> Save Offline</span>) : "Verify Attendance"}
+            </button>
+            
+            {isReturningUser && (
+                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full text-xs text-gray-400 hover:text-gray-600 underline">Not you? Switch Account</button>
+            )}
           </div>
         </motion.div>
       )}
@@ -226,17 +315,27 @@ const StudentAttendance = () => {
       {step === 'result' && (
         <motion.div initial={{opacity: 0, scale: 0.9}} animate={{opacity: 1, scale: 1}} className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-sm w-full">
           {status === 'success' ? (
-            <div className="mb-6"><CheckCircle size={80} className="text-teal-500 mx-auto" /><h2 className="text-2xl font-bold text-gray-900 mt-4">Checked In!</h2><p className="text-gray-500 mt-2">You are marked present.</p><p className="text-xs text-gray-400 mt-4">Device locked for 10 mins.</p></div>
+            <div className="mb-6">
+              {message.includes("Offline") ? <RefreshCw size={80} className="text-yellow-500 mx-auto" /> : <CheckCircle size={80} className="text-teal-500 mx-auto" />}
+              <h2 className="text-2xl font-bold text-gray-900 mt-4">{message.includes("Offline") ? "Saved Offline" : "Checked In!"}</h2>
+              <p className="text-gray-500 mt-2 text-sm px-4">{message}</p>
+            </div>
           ) : (
             <div className="mb-6">
-              {message.includes("Security") ? <ShieldAlert size={80} className="text-red-600 mx-auto" /> : <XCircle size={80} className="text-red-500 mx-auto" />}
+              <XCircle size={80} className="text-red-500 mx-auto" />
               <h2 className="text-2xl font-bold text-gray-900 mt-4">Failed</h2>
               <p className="text-red-500 mt-2 text-sm">{message}</p>
             </div>
           )}
           {status !== 'success' && <button onClick={() => setStep('input')} className="text-gray-400 font-bold hover:text-gray-600 underline text-sm">Try Again</button>}
+          
+          {/* If success, show button to go back to lock screen */}
+          {status === 'success' && (
+             <button onClick={() => { setStep('input'); setOverrideLock(false); }} className="mt-4 text-blue-600 font-bold">Done</button>
+          )}
         </motion.div>
       )}
+
       <footer className="mt-8 text-gray-400 text-xs text-center max-w-xs">&copy; 2025 GeoAttend System.</footer>
     </div>
   );
