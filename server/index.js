@@ -34,12 +34,14 @@ let activeSession = {
   otp: null,
   venueLat: null,
   venueLon: null,
-  radius: 100, // <--- UPDATED: Default to 100m to fix "Too Far" errors
-  lockDuration: 60,
+  radius: 100,
+  lockDuration: 120, // Default 2 hours
   students: []
 };
 
-// === HELPER: Haversine Formula ===
+// Timer variable to clear session automatically
+let sessionTimer = null;
+
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
   const R = 6371; 
   const dLat = deg2rad(lat2 - lat1);
@@ -61,19 +63,35 @@ io.on('connection', (socket) => {
 
   // === LECTURER: START SESSION ===
   socket.on('start_session', (data) => {
+    // Clear any existing timer
+    if (sessionTimer) clearTimeout(sessionTimer);
+
     activeSession = {
       isActive: true,
       className: data.className,
       otp: data.otp,
       venueLat: data.lat,
       venueLon: data.lon,
-      radius: data.radius || 100, // Default 100m
-      lockDuration: data.lockDuration || 60,
+      radius: data.radius || 100,
+      lockDuration: data.lockDuration || 120, // Default 120 mins (2 Hours)
       students: []
     };
     
-    console.log(`\n📢 CLASS STARTED: ${data.className} (Radius: ${activeSession.radius}m)`);
+    console.log(`\n📢 CLASS STARTED: ${data.className}`);
+    console.log(`⏱️ Session will expire in: ${activeSession.lockDuration} mins`);
+    
     io.emit('update_stats', { count: 0 });
+
+    // === AUTO-EXPIRY LOGIC ===
+    // Convert minutes to milliseconds
+    const expiryTimeMs = activeSession.lockDuration * 60 * 1000;
+    
+    sessionTimer = setTimeout(() => {
+      console.log(`🛑 Session Expired: ${activeSession.className}`);
+      activeSession.isActive = false;
+      activeSession.otp = null;
+      io.emit('session_expired', { message: "Class time is over. Attendance closed." });
+    }, expiryTimeMs);
   });
 
   // === LECTURER: RESTORE SESSION ===
@@ -90,7 +108,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // === LECTURER: UPDATE OTP ===
   socket.on('update_otp', (newOtp) => {
     if (activeSession.isActive) {
       activeSession.otp = newOtp;
@@ -98,59 +115,47 @@ io.on('connection', (socket) => {
     }
   });
 
-  // === STUDENT: MARK ATTENDANCE ===
   socket.on('mark_attendance', async (data) => {
     const { studentOtp, fullName, studentId, lat, lon, deviceId, timestamp, isOffline } = data;
     const actualCheckInTime = isOffline && timestamp ? new Date(timestamp) : new Date();
 
     // 1. VALIDATION
     if (!activeSession.isActive) {
-       socket.emit('attendance_result', { status: 'error', message: 'No active class session.', studentId });
+       socket.emit('attendance_result', { status: 'error', message: 'Class session has expired/ended.', studentId });
        return;
     }
 
     if (String(studentOtp) !== String(activeSession.otp)) {
-      socket.emit('attendance_result', { status: 'error', message: 'Incorrect or Expired OTP Code.', studentId });
+      socket.emit('attendance_result', { status: 'error', message: 'Incorrect OTP Code.', studentId });
       return;
     }
 
-    // 2. DUPLICATE CHECK (Session Level)
     if (activeSession.students.includes(studentId)) {
-      socket.emit('attendance_result', { status: 'error', message: 'You have already signed in for this class!', studentId });
+      socket.emit('attendance_result', { status: 'error', message: 'Already signed in!', studentId });
       return;
     }
 
-    // 3. DEVICE BINDING CHECK (Strict Security)
+    // 2. DEVICE BINDING
     try {
-      // Check if ID is bound to another device
       const idBinding = await StudentDevice.findOne({ studentId });
       if (idBinding && idBinding.deviceId !== deviceId) {
-        socket.emit('attendance_result', { status: 'error', message: 'Security Alert: This Student ID is linked to another browser/device.', studentId });
+        socket.emit('attendance_result', { status: 'error', message: 'ID linked to another device.', studentId });
         return;
       }
-
-      // Check if Device is bound to another ID
       const deviceBinding = await StudentDevice.findOne({ deviceId });
       if (deviceBinding && deviceBinding.studentId !== studentId) {
-        socket.emit('attendance_result', { status: 'error', message: 'Security Alert: This browser is linked to another Student ID.', studentId });
+        socket.emit('attendance_result', { status: 'error', message: 'Device linked to another ID.', studentId });
         return;
       }
-
-      // If new, bind them
       if (!idBinding && !deviceBinding) {
         await new StudentDevice({ studentId, deviceId }).save();
-        console.log(`🔒 Bound ID ${studentId} to Device ${deviceId}`);
       }
-    } catch (err) {
-      console.error("Binding Error:", err);
-    }
+    } catch (err) { console.error(err); }
 
-    // 4. GPS CHECK
+    // 3. GPS CHECK
     const distance = getDistanceFromLatLonInM(activeSession.venueLat, activeSession.venueLon, lat, lon);
-    console.log(`🏃 Student ${fullName} is ${Math.round(distance)}m away.`);
 
     if (distance <= activeSession.radius) {
-      // SUCCESS
       activeSession.students.push(studentId);
 
       try {
@@ -163,7 +168,6 @@ io.on('connection', (socket) => {
         });
         await newLog.save();
 
-        // Notify Lecturer
         io.emit('update_stats', { 
           count: activeSession.students.length,
           newStudent: { 
@@ -174,56 +178,37 @@ io.on('connection', (socket) => {
           }
         });
 
-      } catch (err) {
-        console.error("DB Save Error:", err);
-      }
+      } catch (err) { console.error(err); }
 
-      // Send Success to Student
       socket.emit('attendance_result', { 
         status: 'success', 
         message: isOffline ? 'Offline Data Synced!' : 'Marked Present!',
         lockDuration: activeSession.lockDuration,
-        studentId // Tag message
+        studentId 
       });
       
     } else {
-      // FAIL
       socket.emit('attendance_result', { 
         status: 'error', 
-        message: `Too far! (${Math.round(distance)}m away). Move closer to the lecturer.`,
+        message: `Too far! (${Math.round(distance)}m away).`,
         studentId
       });
     }
   });
 });
 
-// === API ROUTES ===
+// API Routes
 app.get('/api/history', async (req, res) => {
-  try {
-    const logs = await AttendanceLog.find().sort({ checkInTime: -1 });
-    res.json(logs);
-  } catch (err) { res.status(500).json({ message: "Error" }); }
+  try { const logs = await AttendanceLog.find().sort({ checkInTime: -1 }); res.json(logs); } catch (err) { res.status(500).json({ message: "Error" }); }
 });
-
 app.delete('/api/history/all', async (req, res) => {
-  try {
-    await AttendanceLog.deleteMany({});
-    res.json({ status: 'success' });
-  } catch (err) { res.status(500).json({ message: "Error" }); }
+  try { await AttendanceLog.deleteMany({}); res.json({ status: 'success' }); } catch (err) { res.status(500).json({ message: "Error" }); }
 });
-
 app.delete('/api/history/:id', async (req, res) => {
-  try {
-    await AttendanceLog.findByIdAndDelete(req.params.id);
-    res.json({ status: 'success' });
-  } catch (err) { res.status(500).json({ message: "Error" }); }
+  try { await AttendanceLog.findByIdAndDelete(req.params.id); res.json({ status: 'success' }); } catch (err) { res.status(500).json({ message: "Error" }); }
 });
-
 app.post('/submit-issue', async (req, res) => {
-  try {
-    await new SupportTicket(req.body).save();
-    res.json({ status: 'success' });
-  } catch (err) { res.status(500).json({ status: 'error' }); }
+  try { await new SupportTicket(req.body).save(); res.json({ status: 'success' }); } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
 const PORT = 3001;
