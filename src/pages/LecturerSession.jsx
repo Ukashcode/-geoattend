@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CountdownCircleTimer } from 'react-countdown-circle-timer';
-import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History, Trash2 } from 'lucide-react';
+import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History, Trash2, X } from 'lucide-react'; // Added X icon
 import * as XLSX from 'xlsx';
 import io from 'socket.io-client';
 import API_URL from '../config';
@@ -17,23 +17,19 @@ const LecturerSession = () => {
   const [gpsLoading, setGpsLoading] = useState(false);
   const [gpsStatus, setGpsStatus] = useState('');
   const [currentAccuracy, setCurrentAccuracy] = useState(null);
-  
-  // Saved Courses State
   const [savedCourses, setSavedCourses] = useState([]);
 
-  // === FIX: RELOAD HISTORY WHENEVER WE ENTER SETUP MODE ===
   useEffect(() => {
     if (step === 'setup') {
       const history = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
       setSavedCourses(history);
     }
-  }, [step]); // Run this every time 'step' changes
+  }, [step]);
 
   function generateCode() {
     return Math.floor(1000 + Math.random() * 9000);
   }
 
-  // Helper to clear course history if needed
   const clearCourseHistory = () => {
     if(confirm("Clear your recent course list?")) {
       localStorage.removeItem('geoAttend_myClasses');
@@ -65,14 +61,13 @@ const LecturerSession = () => {
         setStep('active');
         setGpsLoading(false);
 
-        // === FIX: SAVE & UPDATE STATE IMMEDIATELY ===
-        const cleanName = selectedClass.trim(); // Remove extra spaces
+        const cleanName = selectedClass.trim(); 
         const myClasses = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
         
         if (!myClasses.includes(cleanName)) {
-          const newHistory = [cleanName, ...myClasses]; // Add new class to TOP of list
+          const newHistory = [cleanName, ...myClasses]; 
           localStorage.setItem('geoAttend_myClasses', JSON.stringify(newHistory));
-          setSavedCourses(newHistory); // Update UI immediately
+          setSavedCourses(newHistory); 
         }
 
         socket.emit('start_session', {
@@ -142,7 +137,14 @@ const LecturerSession = () => {
     XLSX.writeFile(wb, `${selectedClass.replace(/[^a-z0-9]/gi, '_')}_Report.xlsx`);
   };
 
-  // === RENDER SETUP ===
+  // === NEW: END SESSION FUNCTION ===
+  const handleEndSession = () => {
+    if(confirm("End this session? Students won't be able to join anymore.")) {
+      // Reload page to reset state and go back to setup
+      window.location.reload();
+    }
+  };
+
   if (step === 'setup') {
     return (
       <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -152,11 +154,9 @@ const LecturerSession = () => {
           </div>
           <div className="p-8 space-y-6">
             
-            {/* === COURSE INPUT SECTION === */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Course Name</label>
               
-              {/* 1. The Text Input */}
               <div className="relative mb-3">
                 <BookOpen className="absolute left-4 top-3.5 text-gray-400" size={20} />
                 <input 
@@ -164,18 +164,26 @@ const LecturerSession = () => {
                   value={selectedClass} 
                   onChange={(e) => setSelectedClass(e.target.value)} 
                   placeholder="e.g. PHY 101" 
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" 
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-10 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" 
                 />
+                {/* === CLEAR BUTTON === */}
+                {selectedClass && (
+                  <button 
+                    onClick={() => setSelectedClass('')}
+                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600"
+                  >
+                    <X size={20} />
+                  </button>
+                )}
               </div>
 
-              {/* 2. The Quick Select Dropdown */}
               {savedCourses.length > 0 && (
                 <div className="relative">
                   <History className="absolute left-4 top-3.5 text-gray-400" size={20} />
                   <select 
                     onChange={(e) => setSelectedClass(e.target.value)}
                     className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium cursor-pointer"
-                    value="" // Always reset to placeholder so user can pick same course again
+                    value="" 
                   >
                     <option value="" disabled>Select from recent courses...</option>
                     {savedCourses.map((course, index) => (
@@ -184,7 +192,6 @@ const LecturerSession = () => {
                   </select>
                   <ChevronDown className="absolute right-4 top-3.5 text-blue-400 pointer-events-none" size={20} />
                   
-                  {/* Clear History Button */}
                   <button 
                     onClick={clearCourseHistory}
                     className="text-xs text-red-400 hover:text-red-600 mt-2 flex items-center gap-1 ml-1"
@@ -224,7 +231,6 @@ const LecturerSession = () => {
     );
   }
 
-  // ... (Keep Render Active section same as before) ...
   return (
     <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
       <div className="mb-6 text-center">
@@ -243,9 +249,13 @@ const LecturerSession = () => {
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center"><span className="text-3xl font-bold text-gray-900 block">{studentsPresent}</span><span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Present</span></div>
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center"><span className="text-3xl font-bold text-gray-900 block">0</span><span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Mins</span></div>
       </div>
-      <div className="w-full max-w-sm mt-8 pb-8">
-        <button onClick={downloadExcel} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-all mb-3">End Session & Download Excel</button>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+      <div className="w-full max-w-sm mt-8 pb-8 space-y-3">
+        <button onClick={downloadExcel} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-all">Download Excel</button>
+        
+        {/* === NEW: END SESSION BUTTON === */}
+        <button onClick={handleEndSession} className="w-full bg-red-100 text-red-600 py-4 rounded-xl font-bold hover:bg-red-200 transition-all">End Session & Start New</button>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mt-4">
           <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 text-left">Recent Activity</h4>
           <div className="space-y-2 max-h-40 overflow-y-auto">
             {attendanceLog.map((log, index) => (

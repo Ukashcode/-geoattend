@@ -33,7 +33,6 @@ const StudentAttendance = () => {
   const [isDeviceLocked, setIsDeviceLocked] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   
-  // New state to allow switching classes while locked
   const [overrideLock, setOverrideLock] = useState(false);
 
   useEffect(() => {
@@ -94,7 +93,6 @@ const StudentAttendance = () => {
     setStep('result');
     setStatus('success'); 
     setMessage("Offline Mode: Attendance Saved! It will sync automatically.");
-    // Default offline lock to 60 mins if unknown
     handleSuccess(data.studentId, 60 * 60 * 1000);
   };
 
@@ -103,13 +101,12 @@ const StudentAttendance = () => {
       timestamp: new Date().getTime(), 
       studentId,
       duration: durationMs,
-      otp: formData.otp // <--- SAVE THE OTP USED
+      otp: formData.otp 
     };
     localStorage.setItem('geoAttend_lock', JSON.stringify(lockData));
     localStorage.setItem('geoAttend_name', formData.fullName);
     localStorage.setItem('geoAttend_id', formData.studentId);
     
-    // Reset override so lock screen shows
     setOverrideLock(false);
     checkDeviceLock();
   };
@@ -162,18 +159,20 @@ const StudentAttendance = () => {
   };
 
   const handleSubmit = () => {
-    // === SMART LOCK CHECK ===
+    // 1. Check Lock (Allow if OTP is different)
     if (isDeviceLocked) {
       const lockData = JSON.parse(localStorage.getItem('geoAttend_lock'));
-      // If they try to use the SAME OTP, block them.
-      // If they use a DIFFERENT OTP (New Class), allow it.
       if (lockData && lockData.otp === formData.otp) {
         alert(`You already signed in for this class. Device locked for ${formatTime(timeLeft)}`);
         return;
       }
     }
 
+    // 2. Validate Form
     if (!formData.fullName || !formData.studentId || formData.otp.length !== 4) { alert("Fill all fields."); return; }
+
+    // 3. REMOVED THE BLOCKING CONNECTION CHECK HERE!
+    // We proceed to GPS regardless of internet status.
 
     setStep('processing');
     setMessage("Acquiring GPS Location...");
@@ -199,6 +198,7 @@ const StudentAttendance = () => {
           isOffline: false 
         };
 
+        // 4. DECIDE: Send or Save?
         if (socket.connected && !isOfflineMode) {
           setMessage("Verifying with Server...");
           socket.emit('mark_attendance', payload);
@@ -213,8 +213,6 @@ const StudentAttendance = () => {
     );
   };
 
-  // === RENDER: DEVICE LOCKED SCREEN ===
-  // Only show if locked AND user hasn't clicked "Join Another Class"
   if (isDeviceLocked && !overrideLock) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
@@ -224,7 +222,7 @@ const StudentAttendance = () => {
           </div>
           <h2 className="text-2xl font-bold text-gray-900">Attendance Marked</h2>
           <p className="text-gray-500 mt-2 text-sm leading-relaxed">
-            You have successfully signed in. This device is locked for this specific class to prevent proxy attendance.
+            Device locked for this class to prevent proxy attendance.
           </p>
           
           <div className="mt-6 bg-gray-900 text-white rounded-xl p-4 flex items-center justify-center gap-3">
@@ -235,12 +233,11 @@ const StudentAttendance = () => {
             </div>
           </div>
 
-          {/* === NEW BUTTON: JOIN ANOTHER CLASS === */}
           <button 
             onClick={() => {
-              setOverrideLock(true); // Hide this screen
-              setStep('input'); // Show input form
-              setFormData(prev => ({ ...prev, otp: '' })); // Clear OTP so they can type new one
+              setOverrideLock(true); 
+              setStep('input'); 
+              setFormData(prev => ({ ...prev, otp: '' })); 
             }}
             className="mt-6 w-full flex items-center justify-center gap-2 text-blue-600 font-bold bg-blue-50 py-3 rounded-xl hover:bg-blue-100 transition-colors"
           >
@@ -293,6 +290,7 @@ const StudentAttendance = () => {
 
             <div><label className="block text-sm font-semibold text-gray-700 mb-2">4-Digit OTP</label><input type="number" name="otp" value={formData.otp} onChange={handleChange} placeholder="0 0 0 0" maxLength={4} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-4 text-center text-3xl font-bold text-gray-800 tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all placeholder:tracking-widest" /></div>
             
+            {/* Button changes based on connection */}
             <button onClick={handleSubmit} className={`w-full font-bold py-4 rounded-xl text-lg shadow-lg transition-transform active:scale-95 ${!isConnected ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}>
               {!isConnected ? (<span className="flex items-center justify-center gap-2"><Save size={20} /> Save Offline</span>) : "Verify Attendance"}
             </button>
@@ -329,7 +327,6 @@ const StudentAttendance = () => {
           )}
           {status !== 'success' && <button onClick={() => setStep('input')} className="text-gray-400 font-bold hover:text-gray-600 underline text-sm">Try Again</button>}
           
-          {/* If success, show button to go back to lock screen */}
           {status === 'success' && (
              <button onClick={() => { setStep('input'); setOverrideLock(false); }} className="mt-4 text-blue-600 font-bold">Done</button>
           )}
