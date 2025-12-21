@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CountdownCircleTimer } from 'react-countdown-circle-timer';
-import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History } from 'lucide-react'; // Added History Icon
+import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import io from 'socket.io-client';
 import API_URL from '../config';
@@ -18,18 +18,29 @@ const LecturerSession = () => {
   const [gpsStatus, setGpsStatus] = useState('');
   const [currentAccuracy, setCurrentAccuracy] = useState(null);
   
-  // === NEW: SAVED COURSES STATE ===
+  // Saved Courses State
   const [savedCourses, setSavedCourses] = useState([]);
 
-  // Load saved courses on mount
+  // === FIX: RELOAD HISTORY WHENEVER WE ENTER SETUP MODE ===
   useEffect(() => {
-    const history = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
-    setSavedCourses(history);
-  }, []);
+    if (step === 'setup') {
+      const history = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
+      setSavedCourses(history);
+    }
+  }, [step]); // Run this every time 'step' changes
 
   function generateCode() {
     return Math.floor(1000 + Math.random() * 9000);
   }
+
+  // Helper to clear course history if needed
+  const clearCourseHistory = () => {
+    if(confirm("Clear your recent course list?")) {
+      localStorage.removeItem('geoAttend_myClasses');
+      setSavedCourses([]);
+      setSelectedClass('');
+    }
+  };
 
   const getPreciseLocation = (attempt = 1) => {
     setGpsLoading(true);
@@ -54,11 +65,14 @@ const LecturerSession = () => {
         setStep('active');
         setGpsLoading(false);
 
-        // Save new course to history if unique
+        // === FIX: SAVE & UPDATE STATE IMMEDIATELY ===
+        const cleanName = selectedClass.trim(); // Remove extra spaces
         const myClasses = JSON.parse(localStorage.getItem('geoAttend_myClasses') || '[]');
-        if (!myClasses.includes(selectedClass)) {
-          myClasses.push(selectedClass);
-          localStorage.setItem('geoAttend_myClasses', JSON.stringify(myClasses));
+        
+        if (!myClasses.includes(cleanName)) {
+          const newHistory = [cleanName, ...myClasses]; // Add new class to TOP of list
+          localStorage.setItem('geoAttend_myClasses', JSON.stringify(newHistory));
+          setSavedCourses(newHistory); // Update UI immediately
         }
 
         socket.emit('start_session', {
@@ -66,7 +80,7 @@ const LecturerSession = () => {
           lat: latitude,
           lon: longitude,
           radius: 100,
-          className: selectedClass,
+          className: cleanName,
           lockDuration: duration
         });
       }, 
@@ -128,6 +142,7 @@ const LecturerSession = () => {
     XLSX.writeFile(wb, `${selectedClass.replace(/[^a-z0-9]/gi, '_')}_Report.xlsx`);
   };
 
+  // === RENDER SETUP ===
   if (step === 'setup') {
     return (
       <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -141,7 +156,7 @@ const LecturerSession = () => {
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Course Name</label>
               
-              {/* 1. The Text Input (Always visible) */}
+              {/* 1. The Text Input */}
               <div className="relative mb-3">
                 <BookOpen className="absolute left-4 top-3.5 text-gray-400" size={20} />
                 <input 
@@ -153,14 +168,14 @@ const LecturerSession = () => {
                 />
               </div>
 
-              {/* 2. The Quick Select Dropdown (Only if history exists) */}
+              {/* 2. The Quick Select Dropdown */}
               {savedCourses.length > 0 && (
                 <div className="relative">
                   <History className="absolute left-4 top-3.5 text-gray-400" size={20} />
                   <select 
                     onChange={(e) => setSelectedClass(e.target.value)}
                     className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium cursor-pointer"
-                    defaultValue=""
+                    value="" // Always reset to placeholder so user can pick same course again
                   >
                     <option value="" disabled>Select from recent courses...</option>
                     {savedCourses.map((course, index) => (
@@ -168,6 +183,14 @@ const LecturerSession = () => {
                     ))}
                   </select>
                   <ChevronDown className="absolute right-4 top-3.5 text-blue-400 pointer-events-none" size={20} />
+                  
+                  {/* Clear History Button */}
+                  <button 
+                    onClick={clearCourseHistory}
+                    className="text-xs text-red-400 hover:text-red-600 mt-2 flex items-center gap-1 ml-1"
+                  >
+                    <Trash2 size={12} /> Clear recent courses
+                  </button>
                 </div>
               )}
             </div>
