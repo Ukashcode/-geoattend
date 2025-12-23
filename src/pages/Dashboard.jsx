@@ -26,29 +26,32 @@ const Dashboard = () => {
   };
 
   const handleDelete = async (id) => {
-    if(!confirm("Delete this record?")) return;
+    if(!confirm("Delete this specific record?")) return;
     try {
       await fetch(`${API_URL}/api/history/${id}`, { method: 'DELETE' });
       setLogs(logs.filter(log => log._id !== id));
-    } catch (error) { alert("Failed to delete"); }
+    } catch (error) {
+      alert("Failed to delete");
+    }
   };
 
   const handleDeleteAll = async () => {
-    if (!confirm("⚠️ WARNING: This will delete ALL records.")) return;
+    if (!confirm("⚠️ WARNING: This will delete ALL attendance records from the database.")) return;
     try {
       await fetch(`${API_URL}/api/history/all`, { method: 'DELETE' });
       setLogs([]);
       alert("History cleared.");
-    } catch (error) { alert("Failed to clear history"); }
+    } catch (error) {
+      alert("Failed to clear history");
+    }
   };
 
-  // === STRICT FILTER: Only show classes started on this device ===
   const filteredLogs = logs.filter(log => {
     const matchesSearch = 
       log.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.className.toLowerCase().includes(searchTerm.toLowerCase()) ||
       log.studentId.includes(searchTerm);
-    
+
     const isMyClass = myClasses.includes(log.className);
     return matchesSearch && isMyClass;
   });
@@ -70,6 +73,7 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto">
+        
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Attendance Dashboard</h1>

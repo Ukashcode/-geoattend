@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CountdownCircleTimer } from 'react-countdown-circle-timer';
-import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History, Trash2, X } from 'lucide-react'; // Added X icon
+import { Loader2, MapPin, BookOpen, Wifi, WifiOff, Clock, ChevronDown, History, Trash2, X } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import io from 'socket.io-client';
 import API_URL from '../config';
@@ -111,8 +111,7 @@ const LecturerSession = () => {
 
     socket.on('session_expired', (data) => {
       alert(data.message);
-      setStep('setup');
-      setOtp(null);
+      resetState();
     });
 
     return () => { 
@@ -137,12 +136,19 @@ const LecturerSession = () => {
     XLSX.writeFile(wb, `${selectedClass.replace(/[^a-z0-9]/gi, '_')}_Report.xlsx`);
   };
 
-  // === NEW: END SESSION FUNCTION ===
   const handleEndSession = () => {
     if(confirm("End this session? Students won't be able to join anymore.")) {
-      // Reload page to reset state and go back to setup
-      window.location.reload();
+      socket.emit('end_session'); 
+      resetState();
     }
+  };
+
+  const resetState = () => {
+    setStep('setup');
+    setOtp(null);
+    setStudentsPresent(0);
+    setAttendanceLog([]);
+    setSelectedClass('');
   };
 
   if (step === 'setup') {
@@ -153,55 +159,25 @@ const LecturerSession = () => {
             <h2 className="text-xl font-bold text-gray-900">Start New Session</h2>
           </div>
           <div className="p-8 space-y-6">
-            
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Course Name</label>
-              
               <div className="relative mb-3">
                 <BookOpen className="absolute left-4 top-3.5 text-gray-400" size={20} />
-                <input 
-                  type="text" 
-                  value={selectedClass} 
-                  onChange={(e) => setSelectedClass(e.target.value)} 
-                  placeholder="e.g. PHY 101" 
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-10 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" 
-                />
-                {/* === CLEAR BUTTON === */}
-                {selectedClass && (
-                  <button 
-                    onClick={() => setSelectedClass('')}
-                    className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600"
-                  >
-                    <X size={20} />
-                  </button>
-                )}
+                <input type="text" value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} placeholder="e.g. PHY 101" className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-10 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium" />
+                {selectedClass && <button onClick={() => setSelectedClass('')} className="absolute right-3 top-3.5 text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>}
               </div>
-
               {savedCourses.length > 0 && (
                 <div className="relative">
                   <History className="absolute left-4 top-3.5 text-gray-400" size={20} />
-                  <select 
-                    onChange={(e) => setSelectedClass(e.target.value)}
-                    className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium cursor-pointer"
-                    value="" 
-                  >
+                  <select onChange={(e) => setSelectedClass(e.target.value)} className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium cursor-pointer" value="">
                     <option value="" disabled>Select from recent courses...</option>
-                    {savedCourses.map((course, index) => (
-                      <option key={index} value={course}>{course}</option>
-                    ))}
+                    {savedCourses.map((course, index) => (<option key={index} value={course}>{course}</option>))}
                   </select>
                   <ChevronDown className="absolute right-4 top-3.5 text-blue-400 pointer-events-none" size={20} />
-                  
-                  <button 
-                    onClick={clearCourseHistory}
-                    className="text-xs text-red-400 hover:text-red-600 mt-2 flex items-center gap-1 ml-1"
-                  >
-                    <Trash2 size={12} /> Clear recent courses
-                  </button>
+                  <button onClick={clearCourseHistory} className="text-xs text-red-400 hover:text-red-600 mt-2 flex items-center gap-1 ml-1"><Trash2 size={12} /> Clear recent courses</button>
                 </div>
               )}
             </div>
-
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Duration (Auto-Close & Lock)</label>
               <div className="relative">
@@ -209,19 +185,15 @@ const LecturerSession = () => {
                 <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-12 pr-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none font-medium">
                   <option value={30}>30 Minutes</option>
                   <option value={60}>1 Hour</option>
-                  <option value={90}>1 Hour 30 Mins</option>
                   <option value={120}>2 Hours</option>
-                  <option value={180}>3 Hours</option>
                 </select>
                 <ChevronDown className="absolute right-4 top-3.5 text-gray-400 pointer-events-none" size={20} />
               </div>
             </div>
-
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col gap-2">
               <div className="flex gap-3"><MapPin className="text-blue-600 shrink-0" size={24} /><p className="text-blue-800 text-sm leading-relaxed"><span className="font-bold">Note:</span> Capturing GPS location.</p></div>
               {currentAccuracy && <div className={`text-xs font-bold mt-2 px-2 py-1 rounded w-fit ${currentAccuracy < 50 ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>Accuracy: {currentAccuracy}m</div>}
             </div>
-            
             <button onClick={handleStartSession} disabled={gpsLoading || !selectedClass.trim()} className={`w-full font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95 flex justify-center items-center gap-2 ${!selectedClass.trim() || gpsLoading ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
               {gpsLoading ? <><Loader2 className="animate-spin" />{gpsStatus}</> : "Start Session"}
             </button>
@@ -251,10 +223,7 @@ const LecturerSession = () => {
       </div>
       <div className="w-full max-w-sm mt-8 pb-8 space-y-3">
         <button onClick={downloadExcel} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-black transition-all">Download Excel</button>
-        
-        {/* === NEW: END SESSION BUTTON === */}
         <button onClick={handleEndSession} className="w-full bg-red-100 text-red-600 py-4 rounded-xl font-bold hover:bg-red-200 transition-all">End Session & Start New</button>
-
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 mt-4">
           <h4 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 text-left">Recent Activity</h4>
           <div className="space-y-2 max-h-40 overflow-y-auto">

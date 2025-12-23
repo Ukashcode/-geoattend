@@ -35,11 +35,10 @@ let activeSession = {
   venueLat: null,
   venueLon: null,
   radius: 100,
-  lockDuration: 120, // Default 2 hours
+  lockDuration: 120,
   students: []
 };
 
-// Timer variable to clear session automatically
 let sessionTimer = null;
 
 function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
@@ -63,7 +62,6 @@ io.on('connection', (socket) => {
 
   // === LECTURER: START SESSION ===
   socket.on('start_session', (data) => {
-    // Clear any existing timer
     if (sessionTimer) clearTimeout(sessionTimer);
 
     activeSession = {
@@ -73,25 +71,40 @@ io.on('connection', (socket) => {
       venueLat: data.lat,
       venueLon: data.lon,
       radius: data.radius || 100,
-      lockDuration: data.lockDuration || 120, // Default 120 mins (2 Hours)
+      lockDuration: data.lockDuration || 120,
       students: []
     };
     
     console.log(`\n📢 CLASS STARTED: ${data.className}`);
-    console.log(`⏱️ Session will expire in: ${activeSession.lockDuration} mins`);
-    
     io.emit('update_stats', { count: 0 });
 
-    // === AUTO-EXPIRY LOGIC ===
-    // Convert minutes to milliseconds
+    // Auto-Expire Timer
     const expiryTimeMs = activeSession.lockDuration * 60 * 1000;
-    
     sessionTimer = setTimeout(() => {
       console.log(`🛑 Session Expired: ${activeSession.className}`);
       activeSession.isActive = false;
       activeSession.otp = null;
       io.emit('session_expired', { message: "Class time is over. Attendance closed." });
     }, expiryTimeMs);
+  });
+
+  // === LECTURER: END SESSION (KILL SWITCH) ===
+  socket.on('end_session', () => {
+    console.log(`🛑 Session Ended Manually`);
+    if (sessionTimer) clearTimeout(sessionTimer);
+    
+    activeSession = {
+      isActive: false,
+      className: null,
+      otp: null,
+      venueLat: null,
+      venueLon: null,
+      radius: 100,
+      lockDuration: 120,
+      students: []
+    };
+    
+    io.emit('session_expired', { message: "The lecturer has ended the session." });
   });
 
   // === LECTURER: RESTORE SESSION ===
@@ -115,13 +128,14 @@ io.on('connection', (socket) => {
     }
   });
 
+  // === STUDENT: MARK ATTENDANCE ===
   socket.on('mark_attendance', async (data) => {
     const { studentOtp, fullName, studentId, lat, lon, deviceId, timestamp, isOffline } = data;
     const actualCheckInTime = isOffline && timestamp ? new Date(timestamp) : new Date();
 
     // 1. VALIDATION
     if (!activeSession.isActive) {
-       socket.emit('attendance_result', { status: 'error', message: 'Class session has expired/ended.', studentId });
+       socket.emit('attendance_result', { status: 'error', message: 'No active class session.', studentId });
        return;
     }
 
@@ -131,7 +145,7 @@ io.on('connection', (socket) => {
     }
 
     if (activeSession.students.includes(studentId)) {
-      socket.emit('attendance_result', { status: 'error', message: 'Already signed in!', studentId });
+      socket.emit('attendance_result', { status: 'error', message: 'You have already signed in!', studentId });
       return;
     }
 
@@ -139,12 +153,12 @@ io.on('connection', (socket) => {
     try {
       const idBinding = await StudentDevice.findOne({ studentId });
       if (idBinding && idBinding.deviceId !== deviceId) {
-        socket.emit('attendance_result', { status: 'error', message: 'ID linked to another device.', studentId });
+        socket.emit('attendance_result', { status: 'error', message: 'Security: ID linked to another device.', studentId });
         return;
       }
       const deviceBinding = await StudentDevice.findOne({ deviceId });
       if (deviceBinding && deviceBinding.studentId !== studentId) {
-        socket.emit('attendance_result', { status: 'error', message: 'Device linked to another ID.', studentId });
+        socket.emit('attendance_result', { status: 'error', message: 'Security: Device linked to another ID.', studentId });
         return;
       }
       if (!idBinding && !deviceBinding) {

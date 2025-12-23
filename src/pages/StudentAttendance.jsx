@@ -159,7 +159,6 @@ const StudentAttendance = () => {
   };
 
   const handleSubmit = () => {
-    // 1. Check Lock (Allow if OTP is different)
     if (isDeviceLocked) {
       const lockData = JSON.parse(localStorage.getItem('geoAttend_lock'));
       if (lockData && lockData.otp === formData.otp) {
@@ -168,11 +167,7 @@ const StudentAttendance = () => {
       }
     }
 
-    // 2. Validate Form
     if (!formData.fullName || !formData.studentId || formData.otp.length !== 4) { alert("Fill all fields."); return; }
-
-    // 3. REMOVED THE BLOCKING CONNECTION CHECK HERE!
-    // We proceed to GPS regardless of internet status.
 
     setStep('processing');
     setMessage("Acquiring GPS Location...");
@@ -198,7 +193,6 @@ const StudentAttendance = () => {
           isOffline: false 
         };
 
-        // 4. DECIDE: Send or Save?
         if (socket.connected && !isOfflineMode) {
           setMessage("Verifying with Server...");
           socket.emit('mark_attendance', payload);
@@ -213,6 +207,13 @@ const StudentAttendance = () => {
     );
   };
 
+  const handleReset = () => {
+    if(confirm("This will clear all saved data on this device. Continue?")) {
+      localStorage.clear();
+      window.location.reload();
+    }
+  };
+
   if (isDeviceLocked && !overrideLock) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
@@ -224,7 +225,6 @@ const StudentAttendance = () => {
           <p className="text-gray-500 mt-2 text-sm leading-relaxed">
             Device locked for this class to prevent proxy attendance.
           </p>
-          
           <div className="mt-6 bg-gray-900 text-white rounded-xl p-4 flex items-center justify-center gap-3">
             <Clock size={20} className="text-orange-400" />
             <div className="text-left">
@@ -232,18 +232,9 @@ const StudentAttendance = () => {
               <p className="text-2xl font-mono font-bold">{formatTime(timeLeft)}</p>
             </div>
           </div>
-
-          <button 
-            onClick={() => {
-              setOverrideLock(true); 
-              setStep('input'); 
-              setFormData(prev => ({ ...prev, otp: '' })); 
-            }}
-            className="mt-6 w-full flex items-center justify-center gap-2 text-blue-600 font-bold bg-blue-50 py-3 rounded-xl hover:bg-blue-100 transition-colors"
-          >
+          <button onClick={() => { setOverrideLock(true); setStep('input'); setFormData(prev => ({ ...prev, otp: '' })); }} className="mt-6 w-full flex items-center justify-center gap-2 text-blue-600 font-bold bg-blue-50 py-3 rounded-xl hover:bg-blue-100 transition-colors">
             Join Another Class <ArrowRight size={16} />
           </button>
-
           <button onClick={() => window.location.href = '/'} className="mt-4 text-gray-400 text-xs hover:text-gray-600">Back to Home</button>
         </div>
       </div>
@@ -253,33 +244,22 @@ const StudentAttendance = () => {
   return (
     <div className="min-h-[calc(100vh-80px)] bg-gray-50 flex flex-col items-center justify-center p-4 font-sans">
       
-      {isSyncing && (
-        <div className="absolute top-20 bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 animate-pulse">
-          <RefreshCw size={14} className="animate-spin" /> Syncing Data...
-        </div>
-      )}
+      {isSyncing && <div className="absolute top-20 bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 animate-pulse"><RefreshCw size={14} className="animate-spin" /> Syncing Data...</div>}
+      {!isConnected && !isSyncing && <div className="absolute top-20 bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 border border-yellow-200"><CloudOff size={14} /> Offline Mode</div>}
 
-      {!isConnected && !isSyncing && (
-        <div className="absolute top-20 bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-10 border border-yellow-200">
-          <CloudOff size={14} /> Offline Mode
-        </div>
-      )}
+      <button onClick={handleReset} className="absolute top-4 right-4 text-xs text-gray-400 hover:text-red-500 underline">Reset App</button>
 
       {step === 'input' && (
         <motion.div initial={{opacity: 0, y: 10}} animate={{opacity: 1, y: 0}} className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md">
-          
           {isReturningUser ? (
             <div className="mb-6 text-center">
-               <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <UserCheck size={32} className="text-blue-600" />
-               </div>
+               <div className="bg-blue-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3"><UserCheck size={32} className="text-blue-600" /></div>
                <h2 className="text-xl font-bold text-gray-900">Welcome, {formData.fullName.split(' ')[0]}</h2>
                <p className="text-sm text-gray-500">{formData.studentId}</p>
             </div>
           ) : (
             <h2 className="text-xl font-bold text-gray-900 mb-6">Student Check-in</h2>
           )}
-          
           <div className="space-y-5">
             {!isReturningUser && (
               <>
@@ -287,17 +267,11 @@ const StudentAttendance = () => {
                 <div><label className="block text-sm font-semibold text-gray-700 mb-2">Student ID</label><input type="text" name="studentId" value={formData.studentId} onChange={handleChange} placeholder="e.g. 2024001" className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all" /></div>
               </>
             )}
-
             <div><label className="block text-sm font-semibold text-gray-700 mb-2">4-Digit OTP</label><input type="number" name="otp" value={formData.otp} onChange={handleChange} placeholder="0 0 0 0" maxLength={4} className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-4 text-center text-3xl font-bold text-gray-800 tracking-[0.5em] focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all placeholder:tracking-widest" /></div>
-            
-            {/* Button changes based on connection */}
             <button onClick={handleSubmit} className={`w-full font-bold py-4 rounded-xl text-lg shadow-lg transition-transform active:scale-95 ${!isConnected ? 'bg-yellow-500 hover:bg-yellow-600 text-white' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}>
               {!isConnected ? (<span className="flex items-center justify-center gap-2"><Save size={20} /> Save Offline</span>) : "Verify Attendance"}
             </button>
-            
-            {isReturningUser && (
-                <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full text-xs text-gray-400 hover:text-gray-600 underline">Not you? Switch Account</button>
-            )}
+            {isReturningUser && <button onClick={() => { localStorage.clear(); window.location.reload(); }} className="w-full text-xs text-gray-400 hover:text-gray-600 underline">Not you? Switch Account</button>}
           </div>
         </motion.div>
       )}
@@ -326,10 +300,7 @@ const StudentAttendance = () => {
             </div>
           )}
           {status !== 'success' && <button onClick={() => setStep('input')} className="text-gray-400 font-bold hover:text-gray-600 underline text-sm">Try Again</button>}
-          
-          {status === 'success' && (
-             <button onClick={() => { setStep('input'); setOverrideLock(false); }} className="mt-4 text-blue-600 font-bold">Done</button>
-          )}
+          {status === 'success' && <button onClick={() => { setStep('input'); setOverrideLock(false); }} className="mt-4 text-blue-600 font-bold">Done</button>}
         </motion.div>
       )}
 
