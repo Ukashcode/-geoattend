@@ -7,7 +7,6 @@ import dotenv from 'dotenv';
 
 import AttendanceLog from './models/AttendanceLog.js';
 import SupportTicket from './models/SupportTicket.js';
-// REMOVED: import StudentDevice ...
 
 dotenv.config();
 
@@ -78,6 +77,7 @@ io.on('connection', (socket) => {
     console.log(`\n📢 CLASS STARTED: ${data.className}`);
     io.emit('update_stats', { count: 0 });
 
+    // Auto-Expire Timer
     const expiryTimeMs = activeSession.lockDuration * 60 * 1000;
     sessionTimer = setTimeout(() => {
       console.log(`🛑 Session Expired: ${activeSession.className}`);
@@ -87,11 +87,12 @@ io.on('connection', (socket) => {
     }, expiryTimeMs);
   });
 
-  // === LECTURER: END SESSION ===
+  // === LECTURER: END SESSION (KILL SWITCH) ===
   socket.on('end_session', () => {
     console.log(`🛑 Session Ended Manually`);
     if (sessionTimer) clearTimeout(sessionTimer);
     
+    // COMPLETELY RESET STATE
     activeSession = {
       isActive: false,
       className: null,
@@ -129,7 +130,7 @@ io.on('connection', (socket) => {
 
   // === STUDENT: MARK ATTENDANCE ===
   socket.on('mark_attendance', async (data) => {
-    const { studentOtp, fullName, studentId, lat, lon, timestamp, isOffline } = data; // REMOVED deviceId
+    const { studentOtp, fullName, studentId, lat, lon, timestamp, isOffline } = data;
     const actualCheckInTime = isOffline && timestamp ? new Date(timestamp) : new Date();
 
     // 1. VALIDATION
@@ -143,15 +144,12 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // 2. DUPLICATE CHECK (Only checks if already in THIS session)
     if (activeSession.students.includes(studentId)) {
       socket.emit('attendance_result', { status: 'error', message: 'You have already signed in!', studentId });
       return;
     }
 
-    // REMOVED: DEVICE BINDING CHECK (StudentDevice)
-
-    // 3. GPS CHECK
+    // 2. GPS CHECK
     const distance = getDistanceFromLatLonInM(activeSession.venueLat, activeSession.venueLon, lat, lon);
 
     if (distance <= activeSession.radius) {
@@ -167,6 +165,7 @@ io.on('connection', (socket) => {
         });
         await newLog.save();
 
+        // === CRITICAL FIX: SEND STUDENT DETAILS TO LECTURER ===
         io.emit('update_stats', { 
           count: activeSession.students.length,
           newStudent: { 

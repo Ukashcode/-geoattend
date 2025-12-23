@@ -4,8 +4,6 @@ import { motion } from 'framer-motion';
 import io from 'socket.io-client';
 import API_URL from '../config';
 
-// REMOVED: getDeviceId function
-
 const socket = io.connect(API_URL, {
   reconnectionAttempts: 5,
   timeout: 10000,
@@ -25,7 +23,6 @@ const StudentAttendance = () => {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [isDeviceLocked, setIsDeviceLocked] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
-  
   const [overrideLock, setOverrideLock] = useState(false);
 
   useEffect(() => {
@@ -46,7 +43,6 @@ const StudentAttendance = () => {
     socket.on('disconnect', () => setIsConnected(false));
     
     socket.on('attendance_result', (data) => {
-      // Filter out messages not meant for this student
       if (data.studentId && data.studentId !== formData.studentId) return;
 
       setIsSyncing(false);
@@ -182,11 +178,11 @@ const StudentAttendance = () => {
           studentId: formData.studentId,
           lat: latitude,
           lon: longitude,
-          // REMOVED: deviceId
           timestamp: new Date().toISOString(),
           isOffline: false 
         };
 
+        // === OFFLINE CHECK ===
         if (socket.connected && !isOfflineMode) {
           setMessage("Verifying with Server...");
           socket.emit('mark_attendance', payload);

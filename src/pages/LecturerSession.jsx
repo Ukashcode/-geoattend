@@ -104,14 +104,17 @@ const LecturerSession = () => {
       }
     });
 
+    // === FIX: CAPTURE STUDENT DATA FOR EXCEL ===
     socket.on('update_stats', (data) => {
       setStudentsPresent(data.count);
-      if (data.newStudent) { setAttendanceLog((prev) => [data.newStudent, ...prev]); }
+      if (data.newStudent) { 
+        setAttendanceLog((prev) => [data.newStudent, ...prev]); 
+      }
     });
 
     socket.on('session_expired', (data) => {
       alert(data.message);
-      resetState();
+      window.location.reload(); // Force reload to clear state
     });
 
     return () => { 
@@ -136,19 +139,12 @@ const LecturerSession = () => {
     XLSX.writeFile(wb, `${selectedClass.replace(/[^a-z0-9]/gi, '_')}_Report.xlsx`);
   };
 
+  // === FIX: FORCE RELOAD ON END ===
   const handleEndSession = () => {
     if(confirm("End this session? Students won't be able to join anymore.")) {
       socket.emit('end_session'); 
-      resetState();
+      window.location.reload(); // This ensures the previous topic is cleared
     }
-  };
-
-  const resetState = () => {
-    setStep('setup');
-    setOtp(null);
-    setStudentsPresent(0);
-    setAttendanceLog([]);
-    setSelectedClass('');
   };
 
   if (step === 'setup') {
