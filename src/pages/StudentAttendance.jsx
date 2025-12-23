@@ -4,14 +4,7 @@ import { motion } from 'framer-motion';
 import io from 'socket.io-client';
 import API_URL from '../config';
 
-const getDeviceId = () => {
-  let id = localStorage.getItem('geoAttend_deviceId');
-  if (!id) {
-    id = 'dev_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-    localStorage.setItem('geoAttend_deviceId', id);
-  }
-  return id;
-};
+// REMOVED: getDeviceId function
 
 const socket = io.connect(API_URL, {
   reconnectionAttempts: 5,
@@ -53,6 +46,7 @@ const StudentAttendance = () => {
     socket.on('disconnect', () => setIsConnected(false));
     
     socket.on('attendance_result', (data) => {
+      // Filter out messages not meant for this student
       if (data.studentId && data.studentId !== formData.studentId) return;
 
       setIsSyncing(false);
@@ -188,7 +182,7 @@ const StudentAttendance = () => {
           studentId: formData.studentId,
           lat: latitude,
           lon: longitude,
-          deviceId: getDeviceId(),
+          // REMOVED: deviceId
           timestamp: new Date().toISOString(),
           isOffline: false 
         };

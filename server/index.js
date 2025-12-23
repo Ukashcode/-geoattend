@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 
 import AttendanceLog from './models/AttendanceLog.js';
 import SupportTicket from './models/SupportTicket.js';
-import StudentDevice from './models/StudentDevice.js';
+// REMOVED: import StudentDevice ...
 
 dotenv.config();
 
@@ -78,7 +78,6 @@ io.on('connection', (socket) => {
     console.log(`\n📢 CLASS STARTED: ${data.className}`);
     io.emit('update_stats', { count: 0 });
 
-    // Auto-Expire Timer
     const expiryTimeMs = activeSession.lockDuration * 60 * 1000;
     sessionTimer = setTimeout(() => {
       console.log(`🛑 Session Expired: ${activeSession.className}`);
@@ -88,7 +87,7 @@ io.on('connection', (socket) => {
     }, expiryTimeMs);
   });
 
-  // === LECTURER: END SESSION (KILL SWITCH) ===
+  // === LECTURER: END SESSION ===
   socket.on('end_session', () => {
     console.log(`🛑 Session Ended Manually`);
     if (sessionTimer) clearTimeout(sessionTimer);
@@ -130,7 +129,7 @@ io.on('connection', (socket) => {
 
   // === STUDENT: MARK ATTENDANCE ===
   socket.on('mark_attendance', async (data) => {
-    const { studentOtp, fullName, studentId, lat, lon, deviceId, timestamp, isOffline } = data;
+    const { studentOtp, fullName, studentId, lat, lon, timestamp, isOffline } = data; // REMOVED deviceId
     const actualCheckInTime = isOffline && timestamp ? new Date(timestamp) : new Date();
 
     // 1. VALIDATION
@@ -144,27 +143,13 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // 2. DUPLICATE CHECK (Only checks if already in THIS session)
     if (activeSession.students.includes(studentId)) {
       socket.emit('attendance_result', { status: 'error', message: 'You have already signed in!', studentId });
       return;
     }
 
-    // 2. DEVICE BINDING
-    try {
-      const idBinding = await StudentDevice.findOne({ studentId });
-      if (idBinding && idBinding.deviceId !== deviceId) {
-        socket.emit('attendance_result', { status: 'error', message: 'Security: ID linked to another device.', studentId });
-        return;
-      }
-      const deviceBinding = await StudentDevice.findOne({ deviceId });
-      if (deviceBinding && deviceBinding.studentId !== studentId) {
-        socket.emit('attendance_result', { status: 'error', message: 'Security: Device linked to another ID.', studentId });
-        return;
-      }
-      if (!idBinding && !deviceBinding) {
-        await new StudentDevice({ studentId, deviceId }).save();
-      }
-    } catch (err) { console.error(err); }
+    // REMOVED: DEVICE BINDING CHECK (StudentDevice)
 
     // 3. GPS CHECK
     const distance = getDistanceFromLatLonInM(activeSession.venueLat, activeSession.venueLon, lat, lon);
